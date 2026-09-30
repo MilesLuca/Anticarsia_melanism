@@ -1,0 +1,1651 @@
+# Small-RNA sequencing and miRNA annotation
+
+**Paper:** Figure S5B, E–H  
+
+Assess and trim paired small-RNA reads, align them to the Dark reference, convert alignments to miRDeep2 inputs and identify miRNAs using the supplied miR-193 star sequence and Lepidoptera miRBase references.
+
+## Inputs
+
+- Three paired libraries: Agem_07a, Agem_14a and Agem_15a (sample list embedded below); reads recorded under PRJNA1165401.
+- adapter.fasta, mir193_star.fa and the two November 2025 miRBase reference FASTAs (embedded input records).
+- GCF_050436995.1_ilAntGemm2_primary_genomic.fna and Agem_GCF_050436995.1.gtf for the STAR index.
+- GCF_050436995.1_ilAntGemm2_primary_genomic_no_white_space.fna for miRDeep2; its header-cleaning step must preserve the STAR/BAM sequence identifiers.
+
+## Outputs
+
+- Pre/post-trimming FastQC reports; Flexbar paired FASTQs; sorted STAR BAMs.
+- Per-sample SAM, collapsed-read FASTA and ARF files.
+- miRDeep2 result tables, precursor/read-signature PDFs and per-sample output directories.
+
+## Software
+
+Jasmine Alqassar’s workflow. Retained logs record Flexbar 3.5.0, STAR 2.7.11b and miRDeep2 2.0.1.3. Notes specify FastQC 0.12.1; Methods specify SAMtools 1.22. miRDeep2 also needs its Perl/RNA-folding dependencies.
+
+## Execution and interpretation
+
+1. The supplied small_RNA-seq/Agem_small_RNAseq_JDA.txt contains both STAR index-generation and alignment commands. These match the standalone scripts archived in sections 6–7. The archive uses standalone scripts where available and two explicitly extracted FastQC stanzas from the notes.
+2. Reads were trimmed and samples were assigned to their corresponding tissue groups: pupal wings, testes and ovaries. Use the NCBI BioSample/SRA metadata associated with PRJNA1165401 for individual sample-to-tissue assignments. The same three-sample list is used in fastq_files, star_runs and mirdeep2_run_Dec_2025; supply it at each configured location.
+3. The example paths place the reads, reference files and results beneath /path/to/project/small_RNA-seq. Replace this root consistently with your chosen directory.
+4. Run pre-QC → Flexbar → post-QC → STAR index → STAR mapping → SAM/ARF conversion → miRDeep2. Create output directories before running each stage. For the sample-specific scripts, pass index 0, 1 or 2 as the first argument to Bash.
+5. Flexbar uses -ap ON. Its retained log confirms output names such as Agem_07a__1.fastq and Agem_07a__2.fastq, while STAR reads Agem_07a_trimmed_flexbar_1.fastq and _2.fastq. Point the STAR input paths to the corresponding trimmed paired FASTQs when adapting the workflow.
+6. STAR logs from 18 November 2025 record the displayed alignment command and successful completion for Agem_07a, Agem_14a and Agem_15a. The reference-index log also records successful completion on that date. Preserve --sjdbOverhang 19, --outFilterMatchNmin 16, mismatch/read-length settings and --alignIntronMax 1. The single-dash -outFilterMismatchNoverLmax spelling is present in the successful logged invocation; it has not been silently rewritten.
+7. Provide the resulting BAMs in mirdeep2_run_Dec_2025 before conversion. Run the final miRDeep2 script from that directory because several arguments are relative paths.
+8. December 2, 2025 miRDeep2 logs record the supplied -s mir193_star.fa commands and report outputs for all three samples.
+9. The two miRBase FASTAs are the actual named inputs to the logged command. Their positional order, including the final none argument, is preserved; no argument order has been inferred or corrected from Methods.
+10. The adapter/reference FASTAs and supplied miR-193 star sequence are embedded below as inputs to the code.
+11. The workflow below covers the small-RNA processing and miRNA-calling code for S5B, E–H.
+
+Save each code block under its stated filename and supply the listed inputs. Replace the example paths with locations on your own computer, install the listed tools, and run the steps in order. Bash scripts run directly with `bash`; any required sample index is explained at the top of the script.
+
+## Code
+
+<a id="step-01"></a>
+
+### 1. Library identifiers
+
+Save this same list as samples in each configured stage directory.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/fastq_files/samples`  
+**Save as:** `samples`  
+**Archive treatment:** Complete source, verbatim.
+
+```text
+Agem_07a
+Agem_14a
+Agem_15a
+```
+
+<a id="step-02"></a>
+
+### 2. Assess raw-read quality
+
+Verbatim pre-trimming FastQC stanza from the supplied notes.
+
+**Source:** `small_RNA-seq/Agem_small_RNAseq_JDA.txt`  
+**Save as:** `fastqc_pre_trim.sh`  
+**Archive treatment:** Verbatim source-note lines 5–30, saved as a separate batch script. Narrative and other stages omitted. Replace installation-specific data paths with editable /path/to/project or /path/to/tools examples. Remove scheduler directives and job logging; use ordinary Bash and explicit thread defaults. Use tools available on PATH instead of local modules, environment activation and executable installation paths. Declare Bash explicitly for the existing shell-array syntax.
+
+```bash
+#!/usr/bin/env bash
+echo "=========================================================="
+echo "Running on node : $HOSTNAME"
+echo "Current directory : $PWD"
+echo "=========================================================="
+
+
+cd /path/to/project/small_RNA-seq/fastq_files
+
+mkdir /path/to/project/small_RNA-seq/fastqc_output_pre-trim
+
+for i in *fastq; do
+        fastqc -f fastq -o /path/to/project/small_RNA-seq/fastqc_output_pre-trim  $i;
+        done
+
+```
+
+<a id="step-03"></a>
+
+### 3. Adapter sequences
+
+The actual adapter file named by the retained Flexbar log.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/adapter.fasta`  
+**Save as:** `adapter.fasta`  
+**Archive treatment:** Complete source, verbatim.
+
+```text
+>R1_adapter
+AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC
+>R2_adapter
+GATCGTCGGACTGTAGAACTCTGAACGTGTAGATCTCGGTGGTCGCCGTATCATT
+```
+
+<a id="step-04"></a>
+
+### 4. Trim paired reads with Flexbar
+
+The standalone script matches the workflow notes and completed trimming log.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/flexbar.sh`  
+**Save as:** `flexbar.sh`  
+**Archive treatment:** Complete analysis source with environment settings adapted. Replace installation-specific data paths with editable /path/to/project or /path/to/tools examples. Remove scheduler directives and job logging; use ordinary Bash and explicit thread defaults. Replace the job-array index with a required, range-checked sample-index argument. Use tools available on PATH instead of local modules, environment activation and executable installation paths. Declare Bash explicitly for the existing shell-array syntax.
+
+```bash
+#!/usr/bin/env bash
+
+# Run once per sample: bash flexbar.sh INDEX (INDEX 0 through 2).
+TASK_ID="${1:?Supply a zero-based sample index (0-2)}"
+if [[ ! "$TASK_ID" =~ ^[0-2]$ ]]; then
+  echo "Sample index must be 0-2." >&2
+  exit 2
+fi
+echo "=========================================================="
+echo "Running on node : $HOSTNAME"
+echo "Current directory : $PWD"
+echo "=========================================================="
+
+
+mkdir /path/to/project/small_RNA-seq/trimmed_flexbar
+cd /path/to/project/small_RNA-seq/trimmed_flexbar
+
+PREFIX=/path/to/project/small_RNA-seq/fastq_files
+
+names=($(cat ${PREFIX}/samples))
+echo ${names[${TASK_ID}]} 
+
+flexbar -r ${PREFIX}/${names[${TASK_ID}]}_R1.fastq -p ${PREFIX}/${names[${TASK_ID}]}_R2.fastq -a /path/to/project/small_RNA-seq/adapter.fasta -ap ON -t ${names[${TASK_ID}]}_ -n 40
+```
+
+<a id="step-05"></a>
+
+### 5. Assess trimmed-read quality
+
+Verbatim post-Flexbar FastQC stanza from the supplied notes.
+
+**Source:** `small_RNA-seq/Agem_small_RNAseq_JDA.txt`  
+**Save as:** `fastqc_post_flexbar.sh`  
+**Archive treatment:** Verbatim source-note lines 76–101, saved as a separate batch script. Narrative and other stages omitted. Replace installation-specific data paths with editable /path/to/project or /path/to/tools examples. Remove scheduler directives and job logging; use ordinary Bash and explicit thread defaults. Use tools available on PATH instead of local modules, environment activation and executable installation paths. Declare Bash explicitly for the existing shell-array syntax.
+
+```bash
+#!/usr/bin/env bash
+echo "=========================================================="
+echo "Running on node : $HOSTNAME"
+echo "Current directory : $PWD"
+echo "=========================================================="
+
+
+cd /path/to/project/small_RNA-seq/trimmed_flexbar
+
+mkdir /path/to/project/small_RNA-seq/fastqc_output_post-trim_flexbar
+
+for i in *fastq; do
+        fastqc -f fastq -o /path/to/project/small_RNA-seq/fastqc_output_post-trim_flexbar  $i;
+        done
+
+```
+
+<a id="step-06"></a>
+
+### 6. Build the STAR reference index
+
+Requires the reference FASTA and the exact supplied GTF. The same STAR command appears under “index genome for alignment with STAR” in small_RNA-seq/Agem_small_RNAseq_JDA.txt.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/star_genome_index.sh`  
+**Save as:** `star_genome_index.sh`  
+**Archive treatment:** Complete analysis source with environment settings adapted. Replace installation-specific data paths with editable /path/to/project or /path/to/tools examples. Remove scheduler directives and job logging; use ordinary Bash and explicit thread defaults. Declare Bash explicitly for the existing shell-array syntax.
+
+```bash
+#!/usr/bin/env bash
+echo "=========================================================="
+echo "Running on node : $HOSTNAME"
+echo "Current directory : $PWD"
+echo "=========================================================="
+
+cd /path/to/project/small_RNA-seq/star_runs
+
+CORES=40
+GENOME_DIR=/path/to/project/small_RNA-seq/star_runs/Agem_genome_index
+GENOME=/path/to/project/small_RNA-seq/GCF_050436995.1_ilAntGemm2_primary_genomic.fna
+ANNOTATION=/path/to/project/small_RNA-seq/Agem_GCF_050436995.1.gtf
+
+mkdir $GENOME_DIR
+STAR --runMode genomeGenerate --runThreadN $CORES --genomeDir $GENOME_DIR --genomeFastaFiles $GENOME --sjdbGTFfile $ANNOTATION --sjdbOverhang 19 --genomeSAindexNbases 14
+
+```
+
+<a id="step-07"></a>
+
+### 7. Align the three small-RNA libraries
+
+The same STAR command appears under “align with STAR” in small_RNA-seq/Agem_small_RNAseq_JDA.txt. The retained star_pass_1_5314397_0.out, _1.out and _2.out logs record these parameters, STAR 2.7.11b and successful completion for all three libraries on 18 November 2025.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/star_runs/star_pass1.sh`  
+**Save as:** `star_pass1.sh`  
+**Archive treatment:** Complete analysis source with environment settings adapted. Replace installation-specific data paths with editable /path/to/project or /path/to/tools examples. Remove scheduler directives and job logging; use ordinary Bash and explicit thread defaults. Replace the job-array index with a required, range-checked sample-index argument. Declare Bash explicitly for the existing shell-array syntax.
+
+```bash
+#!/usr/bin/env bash
+
+# Run once per sample: bash star_pass1.sh INDEX (INDEX 0 through 2).
+TASK_ID="${1:?Supply a zero-based sample index (0-2)}"
+if [[ ! "$TASK_ID" =~ ^[0-2]$ ]]; then
+  echo "Sample index must be 0-2." >&2
+  exit 2
+fi
+echo "=========================================================="
+echo "Running on node : $HOSTNAME"
+echo "Current directory : $PWD"
+echo "Job Started:"
+date
+echo "=========================================================="
+
+ulimit -n 10000
+
+PREFIX=/path/to/project/small_RNA-seq/star_runs
+names=($(cat ${PREFIX}/samples))
+echo ${names[${TASK_ID}]} 
+
+CORES=40
+GENOME_DIR=/path/to/project/small_RNA-seq/star_runs/Agem_genome_index
+GENOME=/path/to/project/small_RNA-seq/GCF_050436995.1_ilAntGemm2_primary_genomic.fna
+ANNOTATION=/path/to/project/small_RNA-seq/Agem_GCF_050436995.1.gtf
+RNAseq_FILES_PATH=/path/to/project/small_RNA-seq/trimmed_flexbar
+OUT_DIR=/path/to/project/small_RNA-seq/star_runs/star_pass1
+
+cd ${OUT_DIR}
+
+STAR --runMode alignReads --runThreadN $CORES --genomeDir $GENOME_DIR --outSAMtype BAM SortedByCoordinate \
+        --outFileNamePrefix ${OUT_DIR}/${names[${TASK_ID}]} \
+        --sjdbGTFfile $ANNOTATION --limitBAMsortRAM 60000000000 \
+        --sjdbOverhang 19 --outSAMstrandField intronMotif --alignSoftClipAtReferenceEnds No --sjdbGTFtagExonParentTranscript Parent \
+        -outFilterMismatchNoverLmax 0.05 --outFilterMatchNmin 16 --outFilterScoreMinOverLread 0  --outFilterMatchNminOverLread 0 --alignIntronMax 1 \
+        --readFilesIn ${RNAseq_FILES_PATH}/${names[${TASK_ID}]}_trimmed_flexbar_1.fastq ${RNAseq_FILES_PATH}/${names[${TASK_ID}]}_trimmed_flexbar_2.fastq 
+      
+echo "=========================================================="
+date
+echo "=========================================================="
+```
+
+<a id="step-08"></a>
+
+### 8. Convert BAM to SAM and collapsed-read/ARF inputs
+
+Uses SAMtools and bwa_sam_converter.pl.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/mirdeep2_run_Dec_2025/file_conversions.sh`  
+**Save as:** `file_conversions.sh`  
+**Archive treatment:** Complete analysis source with environment settings adapted. Replace installation-specific data paths with editable /path/to/project or /path/to/tools examples. Remove scheduler directives and job logging; use ordinary Bash and explicit thread defaults. Use tools available on PATH instead of local modules, environment activation and executable installation paths. Declare Bash explicitly for the existing shell-array syntax.
+
+```bash
+#!/usr/bin/env bash
+echo "=========================================================="
+echo "Running on node : $HOSTNAME"
+echo "Current directory : $PWD"
+echo "=========================================================="
+
+cd /path/to/project/small_RNA-seq/mirdeep2_run_Dec_2025
+
+
+for i in *.bam; do
+   base=$(basename "$i" .bam)
+  samtools view -h "$i" > "${base}.sam";
+done
+
+for i in *.sam; do
+       base=$(basename "$i" .sam)
+       bwa_sam_converter.pl -i "$i" -c -o ${base}_reads_collapsed.fa -a ${base}.arf;
+done
+
+
+```
+
+<a id="step-09"></a>
+
+### 9. Manually identified miR-193 star sequence
+
+Original FASTA header spacing is preserved.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/mirdeep2_run_Dec_2025/mir193_star.fa`  
+**Save as:** `mir193_star.fa`  
+**Archive treatment:** Complete source, verbatim.
+
+```text
+> Agem_mir193_star
+AGGGTCTTGGCGGTCTGGTCGG
+```
+
+<a id="step-10"></a>
+
+### 10. Lepidoptera mature-miRNA reference
+
+Actual November 20, 2025 reference input; retain attribution to miRBase.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/mirdeep2_run_Dec_2025/lep_mature_miRNA_mirbase_Nov20_2025_no_white_space.fa`  
+**Save as:** `lep_mature_miRNA_mirbase_Nov20_2025_no_white_space.fa`  
+**Archive treatment:** Complete source, verbatim. One terminal newline added for Markdown fencing.
+
+```text
+>bmo-let-7-5p
+UGAGGUAGUAGGUUGUAUAGU
+>bmo-let-7-3p
+CUGUAUAGCCUGCUAACUUUCC
+>bmo-miR-1a-5p
+CCGUGCUUCCUUACUUCCCAU
+>bmo-miR-1a-3p
+UGGAAUGUAAAGAAGUAUGGAG
+>bmo-miR-7-5p
+UGGAAGACUAGUGAUUUUGUUGU
+>bmo-miR-7-3p
+AAGAAAUCACUAAUCUGCCUA
+>bmo-miR-8-5p
+CAUCUUACCGGGCAGCAUUAGA
+>bmo-miR-8-3p
+UAAUACUGUCAGGUAAAGAUGUC
+>bmo-miR-9a-5p
+UCUUUGGUUAUCUAGCUGUAUGA
+>bmo-miR-9a-3p
+AUAAAGCUAGGUUACCGGAGUUA
+>bmo-miR-10-5p
+ACCCUGUAGAUCCGAAUUUGU
+>bmo-miR-10-3p
+CAAAUUCGGUUCUAGAGAGGUUU
+>bmo-miR-14-5p
+CGGGGAGAGAAAUCGACGAGGCU
+>bmo-miR-14-3p
+UCAGUCUUUUUCUCUCUCCUA
+>bmo-miR-34-5p
+UGGCAGUGUGGUUAGCUGGUUG
+>bmo-miR-34-3p
+AGCCACUAACGACACUGCUCCU
+>bmo-miR-124
+UAAGGCACGCGGUGAAUGCCAAG
+>bmo-miR-263b-5p
+CUUGGCACUGGGAGAAUUCAC
+>bmo-miR-263b-3p
+GUGAAUUUCCCGAUGCCUUAG
+>bmo-miR-263a-5p
+AAUGGCACUGGAAGAAUUCAC
+>bmo-miR-263a-3p
+CGUGAUCUCUUAGUGGCAUCAC
+>bmo-miR-275-5p
+CGCGCUACUCCGGCGCCAGGACU
+>bmo-miR-275-3p
+UCAGGUACCUGAAGUAGCGCGCG
+>bmo-miR-276-5p
+AGCGAGGUAUAGAGUUCCUACG
+>bmo-miR-276-3p
+UAGGAACUUCAUACCGUGCUCU
+>bmo-miR-277-5p
+UCGUGCCAGGAGUGCGUUUGC
+>bmo-miR-277-3p
+UAAAUGCACUAUCUGGUACGACA
+>bmo-miR-279a
+UGACUAGAUCCACACUCAU
+>bmo-miR-282-5p
+ACCUAGCCUCUCCUUGGCUUUGUCUGU
+>bmo-miR-282-3p
+ACAUAGCCUGAUAGAGGUUACG
+>bmo-miR-283-5p
+UAAAUAUCAGCUGGUAAUUCU
+>bmo-miR-283-3p
+CAGGCUAUCAGCUGGUAUACAG
+>bmo-miR-305-5p
+AUUGUACUUCAUCAGGUGCUCUG
+>bmo-miR-305-3p
+GGCGCUUGUUGGAGUACACUU
+>bmo-miR-307-5p
+ACUCACUCAACCUGGGUGUGAUG
+>bmo-miR-307-3p
+UCACAACCUCCUUGAGUGAG
+>hme-miR-2788-5p
+UGGGGUUUCCUAGCGGCAUGUGC
+>hme-miR-2788-3p
+CAAUGCCCUUGGAAAUCCCAAA
+>hme-miR-193-5p
+AGGGUCUUGGCGGUCUAGUGGG
+>hme-miR-193-3p
+UACUGGCCUGCUAAGUCCCAAG
+>sfr-miR-2c-5p
+UCAGCAAAGUGGUUGUGUCUUA
+>sfr-miR-2c-3p
+UAUCACAGCCAGCUUUGUUGACU
+>sfr-miR-210-5p
+AGCUGCUGGCCACUGCACAAGA
+>sfr-miR-210-3p
+CUUGUGCGUGUGACAGCGGCU
+>sfr-miR-10451-5p
+AUUCAUGCCCAUCAUUGGUG
+>sfr-miR-10451-3p
+CAACCAAUGACUUGGCGGAC
+>sfr-miR-10452-5p
+UGUUGAAGCACGUCAUCCUGUUUA
+>sfr-miR-10452-3p
+AUACAUUAGAACGUGUCUGAACA
+>sfr-miR-10453-5p
+AUGAAUACGCGUAUCAAUGACA
+>sfr-miR-10453-3p
+UGUCAUUGAUACGCGUAUUC
+>sfr-miR-10454a-5p
+UAGUCUGCUAUUACAAUUGUGUC
+>sfr-miR-10454a-3p
+GACACAAUUGUAAUAGAAGACU
+>sfr-miR-10454a-2-5p
+UCUGCUAUUACAAUUGUGCUC
+>sfr-miR-10455-5p
+UUGGUCUCGGAUGUCUUUC
+>sfr-miR-10455-3p
+AGUUAGACGUCCGAGAUG
+>sfr-miR-10456-5p
+UAACGUCAUAAAUAUCCUGC
+>sfr-miR-10456-3p
+GAUGCAGGAUAUUUAUGACG
+>sfr-miR-10457-5p
+UUUGUUUGUUGUGUGUUUCG
+>sfr-miR-10457-3p
+CGAGAAUUAUAUGGACGGAC
+>sfr-miR-10458-5p
+CGCCGGGAUACGUGUUUACCG
+>sfr-miR-10458-3p
+CCUAAAACAUGUAUCCGGCUCA
+>sfr-miR-10459-5p
+UACGACAUGAUGCUAUGGAAGU
+>sfr-miR-10459-3p
+UAGUCUUGCCGUGCCUAUGUC
+>sfr-miR-10460-5p
+GAGCCAAUGUUCGUUAGUGAU
+>sfr-miR-10460-3p
+AAUUACUUCCAUAGCAUUGGCA
+>sfr-miR-10461a-5p
+CGAGGACUGGACUAGUGUCA
+>sfr-miR-10461a-3p
+ACUAGUCGAGUUUCUCGUC
+>sfr-miR-10454b-5p
+UAUUACAAUUGUGUCGGAAU
+>sfr-miR-10454b-3p
+CAUUCUGACACAAUUGUAAU
+>sfr-miR-10454c-5p
+UAUUACAAUUGUGUCGGAAU
+>sfr-miR-10454c-3p
+GACUAUUCUGACACAAUUG
+>sfr-miR-10462-5p
+GAAUUUAAGCAGUCGGGACC
+>sfr-miR-10462-3p
+AUGGGUCCCGACUGCUUAAAU
+>sfr-miR-10463-5p
+AGGGAUUAAAGGCGCAACGAUA
+>sfr-miR-10463-3p
+UAUCGUCACACCCUUAAUCCCC
+>sfr-miR-10464-5p
+ACACGACUGCAAUAGAACUG
+>sfr-miR-10464-3p
+CAGUACCAUUGCAGUCGUGUC
+>sfr-miR-10465-5p
+GGGUGCGAGGAUACUGGCCAAU
+>sfr-miR-10465-3p
+CUGACUUGUAUUCUCGCUGCCC
+>sfr-miR-10466-5p
+UAUAAUUAUCAGCACCGUCCA
+>sfr-miR-10466-3p
+UGAGAGGUGCAGGUAAUUAUA
+>sfr-miR-10467-5p
+UGCUCGGCUGUAUUGAUCGAUC
+>sfr-miR-10467-3p
+AGCGAUGAAUAGAGCCGAGCGAU
+>sfr-miR-10468-5p
+GCGACUUCCCGUCGAAACGU
+>sfr-miR-10468-3p
+UGCACUUGGCGAAGUUGCCUG
+>sfr-miR-10454d-5p
+UGUCAGAAUGGUCGAUCAUU
+>sfr-miR-10454d-3p
+AGUGAUCGGCCAUUCUGACA
+>sfr-miR-10454e-5p
+UGUCACAAUGGUCGAUCACU
+>sfr-miR-10454e-3p
+AGUGAUCGGCCAUUCUGACA
+>sfr-miR-10454f-5p
+CUAUUACAAUUGUGUCAGAU
+>sfr-miR-10454f-3p
+AUUCUGACACAAUUGUAAUA
+>sfr-miR-10469-5p
+UUUUUGCAGGAUCCCGCAUG
+>sfr-miR-10469-3p
+CGGGAUCCUGUAAAAAACUG
+>sfr-miR-3286-5p
+AACUAUUGGGCACUGCACAGGAC
+>sfr-miR-3286-3p
+UUGUGCGUGUUCUAAUAGUUGU
+>sfr-miR-277-5p
+CGUGCCAGGAGUGCGUUUGCA
+>sfr-miR-277-3p
+UAAAUGCACUAUCUGGUACGACA
+>sfr-miR-279c-5p
+GGCGAGUUUGCUUCUGGUGCAUG
+>sfr-miR-279c-3p
+UGACUAGAUCCAUACUCGUCUG
+>sfr-miR-10470-5p
+CGAGCCGGAGCCCCGGUAA
+>sfr-miR-10470-3p
+GUGGUCCGCAGCUUCGGAUC
+>sfr-miR-10471-5p
+CCGGUGCUCUGAUUGGUUACU
+>sfr-miR-10471-3p
+UAGGCCAAUCUGAACCCUGUAU
+>sfr-miR-10472-5p
+UAGAAGCUGUGAUUUUUCGAUAUC
+>sfr-miR-10472-3p
+UCUUUAGUUGUCAAUUCGGCUUGU
+>sfr-miR-10473-5p
+UAGCAUCGUAGAAUUUCUGU
+>sfr-miR-10473-3p
+GACAGAUAUUUCGCGAGCUG
+>sfr-miR-10454g-5p
+AAUUGUGUCAGAAUCGUCGA
+>sfr-miR-10454g-3p
+AUUGACGAUUCUGACACAAU
+>sfr-miR-10474-5p
+CGCGGAAUUAGAUUGUGAUC
+>sfr-miR-10474-3p
+UAUCUCAAUCUAAUAUGGCG
+>sfr-miR-10475-5p
+GAAGCGUCUCCGUGUGGUCGGCG
+>sfr-miR-10475-3p
+CCACCACACGGAGAUGACUCUGA
+>sfr-miR-10476-5p
+GAGCGAUGGUUGGAAUCCAACUG
+>sfr-miR-10476-3p
+UUGGAUUUUAAGUUCCAUCGCU
+>sfr-miR-10477-5p
+CGACGGCGACCUCUCGCGCC
+>sfr-miR-10477-3p
+CGAGAGGGACUGGGAUGCCA
+>sfr-miR-10465-2-3p
+CUGGCUUGUAUUCUCGCUGCCC
+>sfr-miR-10492c-5p
+UUCGGCGCUGUGAUUGGCCGGC
+>sfr-miR-10492c-3p
+ACCAACCAAUCACAACGCUGAA
+>sfr-miR-10478-5p
+CUUAAUGGCUCUGAUACCCG
+>sfr-miR-10478-3p
+CACACACGGGUCCCAAGCUG
+>sfr-miR-10454h-5p
+UGUCAGAAUGAUCGAUCAUUGA
+>sfr-miR-10454h-3p
+UCAAUGGUCGACUAUUCUGAC
+>sfr-miR-10461b-5p
+UGACGAGGAACUCUACUACUU
+>sfr-miR-10461b-3p
+UGAAACUAGUCGAGUUCCUC
+>sfr-miR-10508b-5p
+AACAGCAUUUCGUGACACACA
+>sfr-miR-10508b-3p
+GUCGUGUGUCGCGGAAUGCU
+>sfr-miR-10479-5p
+AAUAUAAUUCAGUGACUGCU
+>sfr-miR-10479-3p
+CGCGGAAAAAGCGGCUGAAU
+>sfr-miR-10480-5p
+GUUUAGCCGUCACAGUGACAUU
+>sfr-miR-10480-3p
+UAAUGUCACUUUGACAGCAAACC
+>sfr-miR-10481-5p
+AUAGAUACAGAAUAGGGGUGAA
+>sfr-miR-10481-3p
+UAACCCCUUUCCUGUGUCUAUUC
+>sfr-miR-10482-5p
+UCGGUGAAUGCCAACGGAUUU
+>sfr-miR-10482-3p
+AAAUCCUUUGAUAUUCACCGGU
+>sfr-miR-10483-5p
+CCUGUAAUUGUUCGUUCCCUU
+>sfr-miR-10483-3p
+AGGGGCUGAACAAUUCCAGA
+>sfr-miR-10483-2-3p
+AGGGGCCGAACAAUUCCAGA
+>sfr-miR-279a-5p
+AAUGGGUAUAUGUCUAGUGC
+>sfr-miR-279a-3p
+UGACUAGAUCUACACUCAUUG
+>sfr-miR-92a-5p
+GGGCGGUGACUGGCGCUAUAU
+>sfr-miR-92a-3p
+UAUUGCACCAGUCCCGGCCUAU
+>sfr-miR-307-5p
+ACUCACUCAACCUGGGUGUGA
+>sfr-miR-307-3p
+UCACAACCUCCUUGAGUGAGC
+>sfr-miR-10484-??
+AAAGCAGGAUCCUCCGACC
+>sfr-miR-10484-3p
+CUGGCGGGCUUUCUGCCCU
+>sfr-miR-2a-5p
+GCAUCAAAGUCGGCUUGUCAU
+>sfr-miR-2a-3p
+UCACAGCCAGCUUUGAUGAGCA
+>sfr-miR-10485-5p
+ACAGUCUACCCGGACAGGCCG
+>sfr-miR-10485-3p
+CACUGGACGGGCAGGCCGCC
+>sfr-miR-10486-5p
+UUGUGAUUAUCUGAUGGCAUG
+>sfr-miR-10486-3p
+UAACGCAUUUGUGGAUAAUG
+>sfr-miR-2b-5p
+CUCACAAAGUGGCUGUAAUGUG
+>sfr-miR-2b-3p
+UAUCACAGCCAGCUUUGAUGAGC
+>sfr-miR-34-5p
+UGGCAGUGUGGUUAGCUGGUUGU
+>sfr-miR-34-3p
+CAGCCAGUAACGACACUGCCUC
+>sfr-miR-11-5p
+CUAGCACUUUGGCUGUGACCU
+>sfr-miR-11-3p
+CAUCACAGUCAGAGUUCUAGCU
+>sfr-miR-375-5p
+ACCCGAGCGGAUUGAGCAAACU
+>sfr-miR-375-3p
+AGUUUGUUCGCCCCGGCUCGA
+>sfr-miR-317-5p
+GGGUGCCACGCUGUGCUCUCU
+>sfr-miR-317-3p
+UGAACACAGCUGGUGGUAUCU
+>sfr-miR-10487-5p
+GCGGGGCCCAUGUUUGUCAACU
+>sfr-miR-10487-3p
+AGAUCAGACAUGGACUCCACCU
+>sfr-miR-10488-5p
+UCGAUGUUUUUUCCAGUACUUUAG
+>sfr-miR-10488-3p
+UGCUGUCGGAAUAAACAUUGAUAA
+>sfr-miR-316-5p
+UGUCUUUUUCCGCUUUGCUG
+>sfr-miR-316-3p
+ACAGCAAAGCGAAAAGGUCUC
+>sfr-miR-13b-5p
+UCGUAAAAAUGGUUGUGCCAUGU
+>sfr-miR-13b-3p
+UAUCACAGCCAUUUUUGACGAGUU
+>sfr-miR-6094-5p
+AUCAGCGGUGGCCUGGGGUACCU
+>sfr-miR-6094-3p
+UAUUCGAGACCUCUGCUGAUCCU
+>sfr-miR-10489-5p
+AAUAGAUCGACUUGGACAUC
+>sfr-miR-10489-3p
+CGAUGUCCAAGUCGAUCUAUU
+>sfr-miR-281-5p
+AAGAGAGCUAUCCGUCGACAGU
+>sfr-miR-281-3p
+CUGUCAUGGAGUUGCUCUCUU
+>sfr-miR-10490-5p
+UUCCAACGAAUGCAAGACCG
+>sfr-miR-10490-3p
+AUCGGUUCGUGCGUUCUGGA
+>sfr-miR-2765-5p
+UGGUAACUCCACCACCGUUGGC
+>sfr-miR-2765-3p
+CCAACGGGGGCAGAGUUCCUAUU
+>sfr-miR-10491-5p
+GUGCUCACAUGUGAACCAGG
+>sfr-miR-10491-3p
+CUGAUUAACAUGUCAGUACAC
+>sfr-miR-13a-5p
+CUGUCAAAGCGGCGGUGAAAUG
+>sfr-miR-13a-3p
+UAUCACAGCCACUUUGAUGUGGU
+>sfr-miR-2756-5p
+ACCCUGUAGCUGCUAAGGGGCG
+>sfr-miR-2756-3p
+CCCCUUUGCUGCUACAUUGUAU
+>sfr-miR-10492a-5p
+GUUUAGCUCUCUGAUUGGUU
+>sfr-miR-10492a-3p
+CCAAUCAGAGCGCCGAACGU
+>sfr-miR-932-5p
+UCAAUUCCGUAGUGCAUUGCAGU
+>sfr-miR-932-3p
+UGCAAGCAGUGCGGAAGUGAGG
+>sfr-miR-10493-5p
+UUCUGAUCCGAAGCUGCGGA
+>sfr-miR-10493-3p
+CGGGGUGGUUUUUAGUCAG
+>sfr-miR-2766-5p
+CCAUCCUUCGUCUCGACUGGCG
+>sfr-miR-2766-3p
+UCAGUCUUGUCGAAUGGUGGGU
+>sfr-miR-10494-5p
+UGAACAAGGUGGGCAAUGAAC
+>sfr-miR-10494-3p
+UCCAUUGCCCACCUUGUUCACG
+>sfr-miR-10495-5p
+CAUCAACCGGGGAUUGUCCU
+>sfr-miR-10495-3p
+AGGGAUAAUCGCCGGCUGAU
+>sfr-miR-10495-3-3p
+CAGGGAUAAUCGCCGGCUGAC
+>sfr-miR-7-5p
+UGGAAGACUAGUGAUUUUGUU
+>sfr-miR-7-3p
+CAAGAAAUCACUAAUCUCCC
+>sfr-miR-10496-5p
+CGGCUUAUUCUUGGUCUUCGA
+>sfr-miR-10496-3p
+UUGAUACUGCAGAUUGGCUC
+>sfr-miR-10497-5p
+CACACCAAACGGUGUCUGGUC
+>sfr-miR-10497-3p
+UGACCAGACUCGUUUUGGUUG
+>sfr-miR-10498-5p
+UUGGUCAACGUUCAACACAGCA
+>sfr-miR-10498-3p
+CUGUUUUGGACAUUGGUGUAAG
+>sfr-miR-10499a-5p
+CAAGGGUUUAAAACUCCAUAC
+>sfr-miR-10499a-3p
+CAUGGAGUUUCAAACUCUUGGA
+>sfr-miR-10-5p
+UACCCUGUAGAUCCGAAUUUGU
+>sfr-miR-10-3p
+CAAAUUCGGUUCUAGAGAGGU
+>sfr-miR-10499a-4-5p
+CAAGGGUUUAAAACUCCAUACA
+>sfr-miR-10500-5p
+UGUUCGGGCAUGUAUUCGUC
+>sfr-miR-10500-3p
+AUAAGGAAGUGUGUUCGGGC
+>sfr-miR-10501-5p
+ACCACUUCCAAUGGUCGUAU
+>sfr-miR-10501-3p
+UUUGGCAUGGAGGUAGGUCU
+>sfr-miR-274-5p
+UUUGUGACCGUCACUAACGGGCA
+>sfr-miR-274-3p
+CUCGUUUUGACGAUCGCAAAAUG
+>sfr-miR-10502-5p
+GGGCAGAAAGCCCGCCAGGCUG
+>sfr-miR-10502-3p
+CUGGUCGGACUUUCUGCCCCCU
+>sfr-miR-10503-5p
+CAUUGGAUCGUUCGAUUCCC
+>sfr-miR-10503-3p
+UUGAGUUGGGCGGUGCUGGU
+>sfr-miR-10504-5p
+AGUCGUACAUAGAGACCUGAAG
+>sfr-miR-10504-3p
+UCAAAUCUCUGUGUAUGAUUGG
+>sfr-miR-14-5p
+CGGGGGGAGGAAUUGACUCGA
+>sfr-miR-14-3p
+UCAGUCUUUUUCUCUCUCCUAU
+>sfr-miR-10505-5p
+UGUAGAGCCAAGUUUCUAACC
+>sfr-miR-10505-3p
+UAGGGUUAGAAACUUGGCUC
+>sfr-miR-10506-5p
+CUGUUUCAGAUCUACAUCUGGC
+>sfr-miR-10506-3p
+UUGGACGAUGUAGUUGUGAAAC
+>sfr-miR-10507-5p
+UGCAAGUUUAUUCUGUAGUGGUCU
+>sfr-miR-10507-3p
+GAACCACAGCAGUUUGAGCGGACC
+>sfr-miR-2755-5p
+CAAGGUGGCCUAGCAGCGUGUU
+>sfr-miR-2755-3p
+CACCCUGUCAGACCAUACUUGUU
+>sfr-miR-10508a-5p
+AAACUCGAGUCGUCAGUAGC
+>sfr-miR-10508a-3p
+AAUGCUCCUCAUGAAUAUGA
+>sfr-miR-10508a-2-3p
+AAUGCUGCUCAUGAAUAUGA
+>sfr-miR-10509-5p
+UGUGUCACGUACAGUAAAAUGUU
+>sfr-miR-10509-3p
+CCCCAUUUUACUGUACGUGACA
+>sfr-miR-10492b-5p
+CGUUCGAUGCUCUGAUUGGUC
+>sfr-miR-10492b-3p
+AACCAAUCAGAGUAUCGAACGC
+>sfr-miR-285-5p
+ACUGUAUUCGAGUGAGUGGAUA
+>sfr-miR-285-3p
+UAGCACCAUUCGAAUUCAGUGC
+>sfr-miR-279b-5p
+GAUAAGCGAUAUUCUAGUAUC
+>sfr-miR-279b-3p
+UGACUAGAUUAUCACUUAUCCU
+>sfr-miR-10510-5p
+CAGAUUGCAGACUUGGCUUC
+>sfr-miR-10510-3p
+UUGAAGUUGGGACGGCGACUU
+>sfr-miR-10499b-5p
+CAAGGGUUUGAAACUCCAUACA
+>sfr-miR-10499b-3p
+CAUGGAGUUUCAAACUCUUGAA
+>sfr-miR-10499b-2-5p
+AAGGGUUUGAAACUCCAUACAU
+>sfr-miR-10511-5p
+CCAUCGAUGGACUGUCGGUCGA
+>sfr-miR-10511-3p
+GAUCGAUUGCCGGUCGAUGGCA
+>sfr-miR-10512-5p
+CACGGAUUAUUGACAUGGC
+>sfr-miR-10512-3p
+AUAAUUCCGGAUUUGUGCUC
+>sfr-miR-10513-5p
+UAAGGCUGAGUACUACAUCUA
+>sfr-miR-10513-3p
+UUAGAUGUAGUACUCGGCCU
+>sfr-miR-10514-5p
+CGGGCAAAUUGAAUGCGCGC
+>sfr-miR-10514-3p
+CGGGUCGUCAAUUUCGGGCC
+>sfr-miR-263b-5p
+CUUGGCACUGGGAGAAUUCACAG
+>sfr-miR-263b-3p
+CGUGAAUUUCCUGAUGCCUUAG
+>pxy-miR-8486
+UAAUGAUAACUUCAACGGUA
+>pxy-miR-8487
+UAUAGUAGGGAGAUAUGG
+>pxy-miR-8488
+AGCUGUCAGUUUCUUAGUAGAUA
+>pxy-miR-8489a-5p
+GCCGUUACCUCUGAGCUUGUA
+>pxy-miR-8489a-3p
+CAAAUUCAGAGGUAACGGCACA
+>pxy-miR-8490
+UUGUUUGACGGUGUCUGUCUCU
+>pxy-miR-8491
+AGUAGAUAGUCAGGUAAACGA
+>pxy-miR-8492
+AACACACGCGGGGGUGUCCAGU
+>pxy-miR-8493
+UACGAAAUUCAGCAGCAUCACU
+>pxy-miR-8494-5p
+CUUCUCUACUGAGUCUGGCAGUG
+>pxy-miR-8494-3p
+CUGACAAACCCAGUAGAGAAAU
+>pxy-miR-8495-5p
+AGAGUCUUGACAUGUUCCAACG
+>pxy-miR-8495-3p
+CUGGGGCAUGUCAAGACUCGGC
+>pxy-miR-8496
+AUUUGUAAUACACGUUGUUCUU
+>pxy-miR-8497
+GAUAAAAUGCAUGAUGUCACUGU
+>pxy-miR-8498
+GUGGGGCAAUUGCGAAAGCUG
+>pxy-miR-8499a
+AUGCAAUUUCAUUGGUUGAUGA
+>pxy-miR-8499b
+CAAUUUCAUUGGUCGAUGAUU
+>pxy-miR-8499c
+UCGUUCCUGGGGGGGUG
+>pxy-miR-8501
+UUGAGUGCAUCUGAAGUUGUAA
+>pxy-miR-252
+CUAAGUACUAGUGCCGCAGGAG
+>pxy-miR-8502
+CAGGAUGUCGGCAUUCAGCG
+>pxy-miR-8503
+AGCGGCGAGAGAACAGGAA
+>pxy-miR-8504
+CCAUCCAUACUUGUACGGGU
+>pxy-miR-2a-5p
+GCAGCAAAGCGGCUGUGACUUAUG
+>pxy-miR-2a-3p
+UAUCACAGCCAGCUUUGUUGACU
+>pxy-miR-965
+GGGAGAAGUUAUAUCGCUGUAUG
+>pxy-miR-8505
+CUCCAUAGAUUCUAGAUUAACG
+>pxy-miR-8537-5p
+GCUGUUAUUGCAAAAUGUUCUA
+>pxy-miR-8506
+UUAGGUGUGAGGGUCACAGC
+>pxy-miR-308
+CGCAGUAUUAUUCCAGUGAAUGU
+>pxy-miR-8507-5p
+GGGGGUUUUUGGAUACGCAGAA
+>pxy-miR-8507-3p
+CAGCAUAUCCAAAAACUCAUCUG
+>pxy-bantam
+UGAGAUCAUGGUGAAA
+>pxy-miR-184
+UAGACGGAGAACUGAUAAG
+>pxy-miR-8508
+AUGAGACCUGGCAUAAAGAUAAAA
+>pxy-miR-2733a
+UCACUGGGUUUGUGAUUCCUGC
+>pxy-miR-7b
+CAAGGAAUCACUAAUCUCCCUA
+>pxy-miR-8509
+UAUAAAUCCUCUUUUGCACUGA
+>pxy-miR-8510a-5p
+ACUGUGAUCUCACCCGCAAGU
+>pxy-miR-8510a-3p
+UCGCAGGUGAGAUGAUAGCAUU
+>pxy-miR-8510b-5p
+ACUGUGAUCUCACCCGCAAGU
+>pxy-miR-8510b-3p
+UCGCAGGUGAGAUGAUAGCAU
+>pxy-miR-750
+AGUUGGACAGGGGAUCUAGACA
+>pxy-miR-8512
+CGUAGGUUUUCAUAGUACCAGUA
+>pxy-miR-263
+CGUGGUCUCUUAGUGGCAUCUC
+>pxy-miR-8511
+UCAGUCUUUUCCUCUUUC
+>pxy-miR-2733b-5p
+AGCAAUCGCAUGGUCAGUAGACA
+>pxy-miR-2733b-3p
+UCACUGGGUGUGUGAUGCCUGU
+>pxy-miR-8515
+CGGCCGGUAAUGGAAUGAAUGC
+>pxy-miR-8517a
+UAUUGAACUGUUCUGUCACUCUUUG
+>pxy-miR-8513-5p
+UAAGGAACUUAAAUCGAAUGUC
+>pxy-miR-8513-3p
+CAUUCGGUUUAAGUUCUUUUCU
+>pxy-miR-8514-5p
+GCGAGAAGCCGUAUCGUUGCCA
+>pxy-miR-8514-3p
+ACAGCGAUACGGCUUUUCGCUU
+>pxy-miR-8528a
+GGGCGGCGGCGAGCGGGA
+>pxy-miR-2756
+UGUAGCUGCUUAGGGGCG
+>pxy-miR-929
+CUCCCUAAUGGAGUCAGGUUG
+>pxy-miR-8521b
+CUUGUCCCGAAUUUUGACUCGGCC
+>pxy-miR-8521a
+CUUGUCCCGAAUUUUGACUCUGCC
+>pxy-miR-8516
+GCGGCGAGCGAACAGGU
+>pxy-miR-8517b
+UAACUAUUGAACUGUUCUGUCAAA
+>pxy-miR-279a
+AGUGGGUGUAAGUCUAGUGCACA
+>pxy-miR-8518
+UCGCUGAUACUGGUGGAAGCGC
+>pxy-miR-8519
+AAAAUGUAAUGAUUUCAGAA
+>pxy-miR-8520-5p
+UAUACGACUCUCUGGCGAUGCC
+>pxy-miR-8520-3p
+CUUCGCCAGAGAGUCGCAUAGU
+>pxy-miR-8500
+AUGCAAUUUCGUUGGUUGAU
+>pxy-miR-6497
+GGGUUUGGAGGGGAAGCGGAU
+>pxy-miR-7a
+GACUAGUGAUUCUGUUGUU
+>pxy-miR-8522
+AUUUGCCGAAGGUUCUGAUACC
+>pxy-miR-8523
+GAAAGAUGGUUAUCGUUU
+>pxy-miR-8524-5p
+ACGGGUUUGCAAGCCACAUAUA
+>pxy-miR-8524-3p
+UAUGUGACUUGCAAAGCCAAGC
+>pxy-miR-8525
+UCCUGUAUGUGAACAACAUAACUG
+>pxy-miR-8526
+UACAACCCUGUCUACUCUCAGG
+>pxy-miR-8527
+CUAUGAGAAAGCACGUAACA
+>pxy-miR-8528b
+GCGGCGGCGAGCGGGAC
+>pxy-miR-8529
+UCAGUCUCUGUAUUCUCCCUUCA
+>pxy-miR-8530-5p
+ACAGAUCGUGAUGGCCUUAGA
+>pxy-miR-8530-3p
+UAAGGUCAUCACGUUUUGUCC
+>pxy-miR-8531
+CGGUGCGGCGUUGUG
+>pxy-miR-8489b
+UGUGCCGUUACCUCUGAAUUUGG
+>pxy-miR-9a
+UAAAGCUAGGUUACCGGAGUU
+>pxy-miR-8532-5p
+CGGGGCAUCUUGUGUCGAAAACU
+>pxy-miR-8532-3p
+UUUCGACACGAGAUGCUCUGUG
+>pxy-miR-8533
+UUCUAGAGGAUCUUGGGCGCGC
+>pxy-miR-8534-5p
+UGACGGCAUCGGCAGCCUAAU
+>pxy-miR-8534-3p
+GAAGUCUGCCGAUGCCGUCAGU
+>pxy-miR-193
+AGGGUCUUAGCGGUCGAGUGG
+>pxy-miR-8535-5p
+UGACUGACACCAACUAUCUACA
+>pxy-miR-8535-3p
+UAGAUAGUUGGUGUCAGUCAGU
+>pxy-miR-277
+UAAAUGCACUAUCUGGUACGACA
+>pxy-miR-283
+CAGAGUGCUAGUUGGUAUCCA
+>pxy-miR-306
+CCAGGUACUAGGUGACUCUGA
+>pxy-miR-3286
+AACUAUUGGUCACUGCACAGGAC
+>pxy-miR-8536b-5p
+GUGACAUAGCUGGGAUAAGUU
+>pxy-miR-8536b-3p
+CCUAUCUCAGCUAUGUCACUA
+>pxy-miR-8537-3p
+AGACAUUUUGCAAUAACAGCGA
+>pxy-miR-10-5p
+UACCCUGUAGAUCCGAAUUUGU
+>pxy-miR-10-3p
+AAAUUCGGUUCUAGAGAGGUUU
+>pxy-miR-8538
+AUAGUUAUUAAUCUUGGUUGGU
+>pxy-miR-8539-5p
+AGUAAUUUCCAGAUAAACGUA
+>pxy-miR-8539-3p
+CGUUUAUUUGGAAACUAUCCC
+>pxy-miR-8540
+UAUGUUAUAUUUAUUUGUUGACUCUA
+>pxy-miR-6307
+CAAGCUCGAACUUUUCCUGCGC
+>pxy-miR-8541
+UAAUUGAGGCUGGCUGAUUGGG
+>pxy-miR-745
+UAGCUGCCUAGCGAAGGGCAACA
+>pxy-miR-8510a-8-3p
+UCGCAGGUGAGAUGAUAGCA
+>pxy-miR-2b
+UCACAGCCAGCUUUGAUGAGCAC
+>pxy-miR-281
+UGUCAUGGAGUUGCUCUCUUUA
+>pxy-miR-8542
+AUUGCUCAUUGAGACGAUGG
+>pxy-miR-8543
+UUAUCAACUUUGAUCUUCUUAU
+>pxy-miR-9b-5p
+UCUUUGGUAUCCUAG
+>pxy-miR-9b-3p
+UAAAGUUAUGGUACCGAAGUCC
+>pxy-miR-2525-5p
+AGUGGCAACAGUUGCCAACAGA
+>pxy-miR-2525-3p
+UCUGGCGGCAACUGUUGUGGAC
+>pxy-miR-8544-5p
+AACGCUUUGUGAGCUACAUUAU
+>pxy-miR-8544-3p
+AAUGUAGCUCACAAAGCGUUCA
+>pxy-miR-8545
+GGUGCAGGGCCUGGUCGAUG
+>pxy-miR-274
+UUUGUGACCGUCACUAACGGGCA
+>pxy-miR-8546
+GGCUGUUGGCGAACUG
+>pxy-miR-8536a
+AUCCCAGCUAUGUCACU
+>pxy-miR-8547
+UUAACUGAAAAUUAAAUAA
+>pxy-miR-2767
+CAAGUAAAUCUCGUGCGGCUG
+>pxy-miR-279b-5p
+GAUGAGUGAAUUUUUAGUUCACG
+>pxy-miR-279b-3p
+UGACUAGAUUUUCACUCAUCCU
+>mse-miR-929b
+GAAUUGACCAAUUGUAGGGAGUC
+>mse-miR-9570
+AUAUAUUGAUUCCGAUACACAAG
+>mse-miR-9571a
+AUAAGUUUCUGGAAUUGUAGC
+>mse-miR-9571b
+AAUAAGUUCCUGGAAUUGUAGC
+>bib-miR-2788
+CAAUGCCCUUGGAAAUCCCAAA
+>bib-miR-193
+UACUGGCCUGCUAAGUCCCAAG
+```
+
+<a id="step-11"></a>
+
+### 11. Lepidoptera hairpin reference
+
+Actual named reference supplied to the logged invocation.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/mirdeep2_run_Dec_2025/lep_hairpin_miRNA_mirbase_Nov20_2025_no_white_space.fa`  
+**Save as:** `lep_hairpin_miRNA_mirbase_Nov20_2025_no_white_space.fa`  
+**Archive treatment:** Complete source, verbatim. One terminal newline added for Markdown fencing.
+
+```text
+>bmo-let-7
+GGUACUGCCGUCGGCUUGUUGAGGUAGUAGGUUGUAUAGUACGGAAAUACAACACAUAGG
+UGCGACUGUAUAGCCUGCUAACUUUCCGAGCUGACGGAAUGACA
+>bmo-mir-1a
+AGCCUUGCGCAAGUUCCGUGCUUCCUUACUUCCCAUAGUCAUUGUAAUCAUAUGGAAUGU
+AAAGAAGUAUGGAGCUGCGCGGGCG
+>bmo-mir-7
+CGCUUCGUGUUGUAUGGAAGACUAGUGAUUUUGUUGUUUUUGUUGACUAACAAGAAAUCA
+CUAAUCUGCCUACAAAGCGACAGCA
+>bmo-mir-8
+CACGACGGAGUAACGGUUCGCAUCUUACCGGGCAGCAUUAGAGUCCUGUCUAUAUUUUCU
+AAUACUGUCAGGUAAAGAUGUCGUCCGCGCUCCACGUUCGUC
+>bmo-mir-9a
+AGUAGAUUGGUUAAUUAUCUUUGGUUAUCUAGCUGUAUGAGUAUUACUGACGUCAUAAAG
+CUAGGUUACCGGAGUUAAGUGCCGUCUACA
+>bmo-mir-10
+AGUGCCCUACAUCUACCCUGUAGAUCCGAAUUUGUUUGAAGUGAGGCGACAAAUUCGGUU
+CUAGAGAGGUUUGUGUGGUGCACG
+>bmo-mir-14
+UUGUCAUUUGUGUCGGGGAGAGAAAUCGACGAGGCUGUUUUAUUUAGUCAGUCUUUUUCU
+CUCUCCUAUAUGAGUGACAU
+>bmo-mir-34
+AGAAUCAGGGUAGACCGCGUUGGCAGUGUGGUUAGCUGGUUGUGUAUGGAAAUGACAACA
+GCCACUAACGACACUGCUCCUGCGUGCACCCUAAAUCA
+>bmo-mir-124
+CAGUCCACCUCCUCGCGUUCACUGCCGGAGCCGUUAUGUAUAUUUAAAAUUCAUAAGGCA
+CGCGGUGAAUGCCAAGAGCGGACUC
+>bmo-mir-263b
+AGCCGACGCUGUUCCUUGGCACUGGGAGAAUUCACAGGAGUUGUAAUUCAUACCCGUGAA
+UUUCCCGAUGCCUUAGCUCAGUGUGGUCA
+>bmo-mir-263a
+AUCGAUCCAAGCACAGGCAAUGGCACUGGAAGAAUUCACGGGUUCAGUUUAUAUAUUCCC
+GUGAUCUCUUAGUGGCAUCACUGGUGCAGGACGAC
+>bmo-mir-275
+CAGGCGGCAGCGCCGCGCGCUACUCCGGCGCCAGGACUGUCCUCACCGAGUCAGGUACCU
+GAAGUAGCGCGCGGUGUCUCCUCCUA
+>bmo-mir-276
+CUGGUAAUUACCACUAGCGAGGUAUAGAGUUCCUACGUAUGCUAACACUGUAGGAACUUC
+AUACCGUGCUCUUGGGUUUGCCAA
+>bmo-mir-277
+UUGAUUACGCCUCGGGGUUCGUGCCAGGAGUGCGUUUGCAAAGAGGCCGACAUGUUUGCG
+UUAUUGCAAUGUUAACACUGUAAAUGCACUAUCUGGUACGACAUCCCGGGGCGUGUAGCA
+AC
+>bmo-mir-279a
+ACGUCAAUUUCUUUCGAUGAGUGGAGGUUUAGUGCAUGUUUAUUUACACCAUGACUAGAU
+CCACACUCAUCCAUGGAAGUUGCGA
+>bmo-mir-282
+CGGGACUUUGACCUAGCCUCUCCUUGGCUUUGUCUGUUUCGUUAGUAGCUCAGACAUAGC
+CUGAUAGAGGUUACGUUUUGUCCCU
+>bmo-mir-283
+AACGUUUCCCGACUAAAUAUCAGCUGGUAAUUCUGGGCUUUAUUAAUCCCAGGCUAUCAG
+CUGGUAUACAGUUAUGAUACGUA
+>bmo-mir-305
+CGACCGCCGCACGCCCAUUGUACUUCAUCAGGUGCUCUGGUGAUCAUAGUUCCAGGCGCU
+UGUUGGAGUACACUUACCGUGUCGGCGGUUA
+>bmo-mir-307
+AGCUCGUUCCCGGUUACUCACUCAACCUGGGUGUGAUGUGUGCACUCGUUGCUCGGCCCA
+UCACAACCUCCUUGAGUGAGCGAUCGUCUAUGAGCC
+>hme-mir-2788
+GUCGCUGUAUUGCUGGGGUUUCCUAGCGGCAUGUGCCUUCUUCUAUGCAAUGCCCUUGGA
+AAUCCCAAACGUGCUGGCGAC
+>hme-mir-193
+CCAGCCUUGGUGAGGGUCUUGGCGGUCUAGUGGGUGUGCUCAGUUCUUACUGGCCUGCUA
+AGUCCCAAGCUAUGGUGG
+>bib-mir-2788
+GUCGCCGUAGAACUGGGGUUUCAAAGCGGCAUGUGCCUUCGAUAUGCAAUGCCCUUGGAA
+AUCCCAAACGUGCAGGCGAC
+>bib-mir-193
+AGGCCCAACCGCGGCAAGGGUCUUGGCGGUCUGGUCGGUGUACUCCUUCUUACUGGCCUG
+CUAAGUCCCAAGCCGCGGUGGGCCCUGU
+>pxy-mir-8486
+AAAAACAGUCUCAGCCAGGUAUACUGUUGGAGUUAUCAUUAAAAGAUUUAAUUUUGUUUU
+GUCCUGUACAAAGAAUAAGACGUUUAUUAAUGAUAACUUCAACGGUAUACCUCGUUUAGU
+CUGUUCCG
+>pxy-mir-8487
+AAAAUAUCUCCUUGUGUUCAAUCAAUAAAAAUGAUAAUGACCUAGGUCAAACCCCAGCAC
+AAACAGAUGGUUGAUAUAGUAGGGAGAUAUGGCU
+>pxy-mir-8488
+AAAAUGUUAGUCUAUGGUCAACAGCUGUCAGUUUCUUAGUAGAUAAGUUUAUAAUUCUAU
+CACUGGGAAACUGAUACUGGUUGUCUAUGGUCUAUAACUACAUCAU
+>pxy-mir-8489a
+AAAUGGCCAAUUUAGUGGCCGUUACCUCUGAGCUUGUAUGUCCAUAAAUUCAUCCAAAUU
+CAGAGGUAACGGCACACUACAUUAGGCUACUG
+>pxy-mir-8490
+AACCCUUACAGAUAGACAGACACCGUCAAACAAAGUGAUCCUAACUUUGUUUGACGGUGU
+CUGUCUCUCUGUCUGGCUG
+>pxy-mir-8491
+AAGACAAGAGUUAUAGCUAGUUGGUAGCUUCUGGAGUAGAUAGUCAGGUAAACGAACGUG
+CCAGCCUCGUUUGCCUUAUUAUCAACUCCUAGAGGCUUCAUAGUCGCUCUGGUAAU
+>pxy-mir-8492
+AAGGUGGUGGAAAAACUGGAUACCCUUUCGUAUGAUUCUCAGAGGAAACUGACAAACACA
+CGCGGGGGUGUCCAGUAAUUUCAGCACAGA
+>pxy-mir-8493
+AAUAGUUCUUUAGUGAUGCUCCUGAAAUUCAUAGAAUUUCAACUACGAAAUUCAGCAGCA
+UCACUCUAGAUCUCAU
+>pxy-mir-8494
+AAUGAUAAGGCAUCUUCUUCUCUACUGAGUCUGGCAGUGGUUUUAAUUUAAUAUUCACUG
+ACAAACCCAGUAGAGAAAUAGAUUACUUAUUUUA
+>pxy-mir-8495
+AAUGGAAGAAUGCUGUGGUGGAGCAGAGUCUUGACAUGUUCCAACGUGUUGUCGGUGCCG
+CUGGGGCAUGUCAAGACUCGGCUGCAUCACGGCGAUGGCCUCG
+>pxy-mir-8496
+AAUUUUUGUAAAGAACUUCGUGUAUUCGUUUAGUUAUAAUUUGUAAUACACGUUGUUCUU
+AUUAAAAUUA
+>pxy-mir-8497
+ACAGAGUGUUGCAAUAGUGGUAUACUAAGGCCCUGUUUCACAUGGUUAGUGGCUACCUGU
+UAGAUAAAAUGCAUGAUGUCACUGUCAAAAAAAUUAUAACAGAGAGUGACAGCAUGUAUU
+UUAUCUUACACGUAGCUACUAACCAGAUAUAGUGAAACAGGGGCUAAGUCCAAAGGGGGU
+UACUCAAU
+>pxy-mir-8498
+ACCAAGCCGAUAGUCAGCUUUCGCAAUUUGCCGCACCCGUAAGUGUAUCUGGGUGGGGCA
+AUUGCGAAAGCUGAGUAUUUGCUUAUA
+>pxy-mir-8499a
+ACUGCGAGGUAAACAUCGACCAAUGAAACUGCAUCAAACGCUCAUGCAAUUUCAUUGGUU
+GAUGAUUUCCUCGCUCA
+>pxy-mir-8499b
+ACUGCGAGGUAAACAUCGACCAAUUAAAUUGCAUUAAACGCUCAUGCAAUUUCAUUGGUC
+GAUGAUUUCCUCGCUCA
+>pxy-mir-8499c
+ACUGCUGUCGUUCCUGGGGGGGUGCGGGGUGCUCUCCGCGCAGCAGCACGCCUACCAGCC
+GGGCCGCAGCACG
+>pxy-mir-8501
+AGAACCGACGCGAAUGACAACUUCAGAUGCACUCAAGAUUACUAUCUUGAGUGCAUCUGA
+AGUUGUAAUUCGCGUCGGUAAC
+>pxy-mir-252
+AGAACUAAAUCUUGUUCCUAAGUACUAGUGCCGCAGGAGUGUUUUUACUAUCUCCUGCUG
+CUUAAGUGCUUAUCAAGAAGUAUUUAGUGCU
+>pxy-mir-8502
+AGACAACCUUUGCAAGGUUUAGUCGCUGAAUGCCGACAUUCUGUAAGUAAUAGUAAUUUU
+CCAGGAUGUCGGCAUUCAGCGUCGAAGCCCUUUGCAAUACCUACGCGGUUGGAA
+>pxy-mir-8503
+AGGAAGCGGCGAGAGAACAGGAACAGAUGAUCAUGCCGAGGAAUUUGAGGCACUUCCUGU
+GUCCGCCGCUUGAA
+>pxy-mir-8504
+AUACAUGUAUACAGGGUCUCCGUGCAAGUAUGGAUUUAAUGAAGGGGCUGACGAAGGGAC
+UUGUCGGUUUCCCAAAGUUGGUGGAAAACAGUACCUGAGUUAACUCAUUCAUUCCAUCCA
+UACUUGUACGGGUAUCCUGUAUACCUGACG
+>pxy-mir-2a
+AUAUUGAAUCCGGUGAAGGCAGCAAAGCGGCUGUGACUUAUGUCUUCCAUAUCAUAUCAC
+AGCCAGCUUUGUUGACUUUACUGAUUUGAAUU
+>pxy-mir-965
+AUCAGCUGUAUUACUGAGGGAGAAGUUAUAUCGCUGUAUGUAUUAUGUGCACUAUCAUAA
+GCGUAUAGCUUUUCCCCUUAGUGGUACAGCUAUC
+>pxy-mir-8505
+AUCAGUCGUUAAUCUAGAGUCUAUGGAGGAUUAGGGUUGGACCCCUACGCCUCCAUAGAU
+UCUAGAUUAACGCCUACU
+>pxy-mir-8537-1
+AUCGUCGCUGUUAUUGCAAAAUGUUCUAUGUCAUCGAAAAUUGAUUUUGAGAUUUUGAUU
+AUAGAUUCAAAGUACGAAAUAUAUAUUCGAUGACAUAGAACAUUUUGCAAUAACAGCGAC
+UAC
+>pxy-mir-8506
+AUGCCGCCUGUGACUCUCACACCUGGUACGUUCGUGGAUGCUAUUAGGUGUGAGGGUCAC
+AGCUAGUUUGGUGGAGG
+>pxy-mir-308
+AUGCGCAGUAUUAUUCCAGUGAAUGUGUUUCAGCUACAAUCACAGGAUAAUACUGCGAGU
+>pxy-mir-8507
+AUGGCAAUGGCCGCCUUGUCAGGGGGUUUUUGGAUACGCAGAAUGUUUUGUCAUACAUCC
+AGCAUAUCCAAAAACUCAUCUGAUAAUUUGGCCUCUGCGUC
+>pxy-bantam
+AUGUAGAUCCCGUGACUCGGGGUCAUUGACAUGAUGACAGUUCAUUUGUACUUGUAAUGU
+CGAGUGUUAGGUACCCGACGUGAGAUCAUGGUGAAAUCUGAGU
+>pxy-mir-184
+AUUGAAUUUCAUUAGUUCUCUCCGCGCGGAGCUAGACGGAUGUUGCUGACCUACUUGCGA
+UCUCGACGGAUCACGCGCAGCAGUUUAAAUUGUUUGUCGGAUGUUUUUGUUCUUUAUAUA
+GACGGAGAACUGAUAAGUUCGUG
+>pxy-mir-8508
+AUUGAUAUUUGUUUAUUAAAUGAGACCUGGCAUAAAGAUAAAAAUACAAUUUAAAGAAUU
+UUUAUCUUUAAGCUAUUUUAUUAAAUUUUGUAUCGCUAUCAUAACUUUCACUGUUACUGU
+GUCCCAUUAUCAAACUAUCA
+>pxy-mir-2733a
+AUUUCUUUGAGCGGCAGCAAUCGCAUCCUCAGAAGGCACGCUUUAAUUCUGUCACUGGGU
+UUGUGAUUCCUGCGGCUUGAAGACAU
+>pxy-mir-7b
+CAAGAGGCGUCGAUUGCCCCGAGUUGUAUGGAAGACUAGUGAUUUUGUUGUUUUAUUGAA
+UUAACAAGGAAUCACUAAUCUCCCUACAAAGCGGUGGCCCUUGCUUCGGA
+>pxy-mir-8509
+CAAGCCAAAACUCCCGGAUCGGUUUAUAAAUCCUCUUUUGCACUGAAUGGGCAUGCUCAG
+UGGAAAAGAGGAUCUGUAGAUCGAUCCGGGUAUGCGCAAC
+>pxy-mir-8510a-5
+CAAGCGGCGGUCUGUUCUCGUCGAUACUGUGAUCUCACCCGCAAGUCGGUCGUGCACUCG
+CAGGUGAGAUGAUAGCAUUGAAGGGAGGAGCGGCAACCACGCACU
+>pxy-mir-8510a-4
+CAAGCGGCGGUCUGUUCUCGUCGAUACUGUGAUCUCACCCGCAAGUCGGUCGUGCACUCG
+CAGGUGAGAUGAUAGCAUUGAAGGGAGGAGCGGCAACCACGCACU
+>pxy-mir-8510b
+CAAGCGGUGGUCUGUUCUCGUCGAUACUGUGAUCUCACCCGCAAGUCGGUCGUGCACUCG
+CAGGUGAGAUGAUAGCAUCGAAGGGAGGAGCGGCAACCACGCACU
+>pxy-mir-750
+CAAGGCUCCACGUCUGAGUUGGACAGGGGAUCUAGACAGUUCGCAACAUACUUCUGCCAG
+AUCUAACUUUCCAGCUCACGCGUGGAGCCAAC
+>pxy-mir-8512-1
+CAAUACCGGACUAUGAAAGCCCACCUCCGAUGAGACGUAGGUUUUCAUAGUACCAGUACC
+U
+>pxy-mir-263
+CACUCGUACUGACACAGGCAAUGGCACUGGAAGAAUUCACGGGUUUUGUAACUACCCCCG
+UGGUCUCUUAGUGGCAUCUCUGGUGUCGGGCGAUUC
+>pxy-mir-8511
+CAGAGUCAGUCUUUUCCUCUUUCCGUUUCGACAGCUUCUGGUAGAUUUCAUCCACAGUUU
+UAUGCCUGGUUUCUGGGAAGCAGAUGACAGAGUAGAAGCAGGCGAAGAGACUGACUAUA
+>pxy-mir-2733b
+CAUUCUAAAAGGUACAGCAAUCGCAUGGUCAGUAGACAGUUUUUGAAUAAUGUCACUGGG
+UGUGUGAUGCCUGUGUCUGUUAGAUAC
+>pxy-mir-8515-1
+CCAGCGAGUAGCCAUCGCGCCCCGACCCCCGCCGCCGCGCCGCCACCGCGCGCGUUCCCC
+UAUCUCCCUGUCGUUGCAUUCAUUCCAUUACCGGCCGCGGCGUGCAGGUUCUUAUGCGGC
+CGGUAAUGGAAUGAAUGCAACGACAGGAAGGGAGGGCAACGCGCGCGGUGGCGGCGCGGC
+GGCGGCGCGGUGGCGGGCUUCGCGCGACUCGUAUCUACAGUG
+>pxy-mir-8517a
+CCAUAUAGUCUAGCCCCCUUAUUCAUAAAAUAGUUAGUGGAGACUUAAGCUAUUGAACUG
+UUCUGUCACUCUUUGACAGAGAACAAUUUGUUCUUUGACAGAGAGGGACAAAACAGUUGA
+AUAGCUAAAGCGUCCAUUAACUUUUUUAUGAAUAAGGGGGUUAGUCUAUACAU
+>pxy-mir-8512-2
+CCCGGCCAAUACCGGACUAUGAAAGCCCACCUCCGACGAGACGUAGGUUUUCAUAGUACC
+AGUACCUGCCCUA
+>pxy-mir-8513
+CCGAGUUGCUGUAAGGAACUUAAAUCGAAUGUCGUCAUGUACUGUCAAAGUAAGGCUUUG
+AAGGUUGACAUUCGGUUUAAGUUCUUUUCUGCAACUAGC
+>pxy-mir-8514
+CCGGCGAGAAGCCGUAUCGUUGCCAGUUGAGUGCGUCACAGCGAUACGGCUUUUCGCUUG
+>pxy-mir-8528a
+CCGGGACAGAACCACAGGGGGGGCGGCGGCGAGCGGGACCUGGUCGCCUAGCCGCCCCCG
+CGCCGCGUGGCGUCCGCG
+>pxy-mir-2756
+CGAGCGCAGGGCGCGGUCCCUGUAGCUGCUUAGGGGCGUUGCCUCCGCCCCCGAGUGCCU
+ACAGCGACUGUGCCCUGCGCAUA
+>pxy-mir-8515-2
+CGAGUCGCGCGAAGCCCGCCACCGCGCCGCCGCCGCGCCGCCACCGCGCGCGUUGCCCUC
+CCUUCCUGUCGUUGCAUUCAUUCCAUUACCGGCCGCAUAAGAACCUGCACGCCGCGGCCG
+GUAAUGGAAUGAAUGCAACGACAGGGAGAUAGGGGAACGCGCGCGGUGGCGGCGCGGCGG
+CGGGGGUCGGGGCGCGAUGGC
+>pxy-mir-929
+CGCAGCCCAUGGAUGUGAAAUUGACUCUAGUAGGGAGUCCGUGUCCACGCCGCGACUCCC
+UAAUGGAGUCAGGUUGACUUCUAUGAGGCUAAC
+>pxy-mir-8521b-10
+CGCGGCAGGCAGAAUUCGGGACGAGCCCGGAGCGGUGGCUUGUCCCGAAUUUUGACUCGG
+CCAAA
+>pxy-mir-8521a-3
+CGCGGCAGUCAGAAUUCGGGACAAGCCCGGGGCGGUCGCUUGUCCCGAAUUUUGACUCUG
+CCAAA
+>pxy-mir-8516
+CGCGGCGCGGCGAGCGAACAGGUGUAAUAUGCCCGACCACUUAUAUACAUAUCUAAAUUG
+AAUGAGACAUAAAUGCUAUACAUGAAUCCCUUGCUUCAGUGGCGUCGCUCGCGGCCCACU
+>pxy-mir-8521a-1
+CGUUUUUGUCUCUGGCGCGGCAGUCAGAAUUCGGGACAAGCCCGGAGCGGUCGCUUGUCC
+CGAAUUUUGACUCUGCCAAAUCAAAACCA
+>pxy-mir-8521a-2
+CGUUUUUGUCUCUGGCGCGGCAGUCAGAAUUCGGGACAAGCCCGGAGCGGUCGCUUGUCC
+CGAAUUUUGACUCUGCCAAAUCAAAACCA
+>pxy-mir-8521b-11
+CGUUUUUGUCUCUGGCGCGUCAGUCAGAAUUCGGGACAAGCCCGGAGUGGUCGCUUGUCC
+CGAAUUUUGACUCGGCCAAAUCAAAACCA
+>pxy-mir-8517b
+CUAACCCCCUUAUUCAUAAAAAAGUUACUGAACGGAUUAACUAUUGAACUGUUCUGUCAA
+ACAAUUUGUUCUUUGACAGAGAGUGACAAAACAGUUCAAUAGCUAAUCCGUCCAGUAACU
+UUUUUAUGAAUAAGGGGGUAAG
+>pxy-mir-279a
+CUAUAUACAUGCAGCGAGUGGGUGUAAGUCUAGUGCACAGUUUUUAAUUUUGUGACUAGA
+UCUACACUCAUUGAUUGCAUUAUGAUU
+>pxy-mir-8518
+CUCCCGGACCCUCGCUGAUACUGGUGGAAGCGCGAGGGGCGUUGCCACCAGUAUCCGCGA
+GCGUCCGGAGG
+>pxy-mir-8521b-8
+CUCUGGCGCGGCAGUCAGAAUUCGGGACAAGCCCGGAGCGGUUGCUUGUCCCGAAUUUUG
+ACUCGGCCAAAA
+>pxy-mir-8521b-3
+CUCUGGCGCGGCAGUCAGAAUUCGGGACGAGCCCGGAGCGGUGGCUUGUCCCGAAUUUUG
+ACUCGGCCAAAU
+>pxy-mir-8521b-1
+CUCUGGCGCGGCAGUCAGAAUUCGGGACGUGCCCGGAGCGGUGGCUUGUCCCGAAUUUUG
+ACUCGGCCAAAU
+>pxy-mir-8519
+CUGUGUCUAAAAAUUAAAAAUGUAAUGAUUUCAGAAACUAAUGCUACAGUACAAUGUGCC
+UGCUGAAACAUUUCUGACAAUUGUUAUAUUUUUGUUUUUUUGGGUGGUU
+>pxy-mir-8520
+CUUAGCCCCUUCUCCCACUAUACGACUCUCUGGCGAUGCCACAGCGACUACGACUGGCUU
+CGCCAGAGAGUCGCAUAGUGGGAGAUGGGGUUUAA
+>pxy-mir-8500
+CUUAGGCUGCCAGUCCACCAAAUCGGAGUGAGCUAGCGGAGCAGUGUGCGAAGCUAUAAU
+CGUGCAAUUGAAUUGCAUGAGCAGAGUUUUUAUGCAAUUUCGUUGGUUGAUUUCACUUUG
+CACACCGCUCUGCUAGCCCACUCCGCUCUGGUGGACAGGCAGCCUUAU
+>pxy-mir-6497
+CUUCGGAAUAAGGAUUGGCUCUGAGGACCGGGGCGUGUCGGGUUUGGAGGGGAAGCGGAU
+GCGGCCGGUGCCGGGCCUGGUCGAUGCCCGUUCACGCGGGCGGACUCUGGGCCCGCGCUC
+CGGCGUUCCGCGGAUCCUCCUAGCCGUAAGGCCGUGUCGGUUUCGUCUCGUGC
+>pxy-mir-8521b-4
+CUUGUGUACGUUCUUGUCUCUGGCGCGGCAGUCAGAAUUCGGGACAAGCCCGGAGCGGUG
+GCUUGUCCCGAAUUUUGACUCGGCCAAAUGAAAACAGAACGUAGACUAG
+>pxy-mir-7a
+GAAAAGUCUUAGAACACAAUUUAUGAUUUUGUAUCUUUGUUUGGACUAGUGAUUCUGUUG
+UUGAUAGACUUAUGGUUUACAACAAAUGACAUAAAAUUUGUUCUACGUUGCUUAUU
+>pxy-mir-8522
+GAAAAUACAGACCGUCUCGGAACCUUCGGCAAAUGAUGGUAAACGUCUCAUUUGCCGAAG
+GUUCUGAUACCAACUGUAUUCAC
+>pxy-mir-8523
+GAAAGAUGGUUAUCGUUUCGUAACUGAGCGUUUAAGAAACAAGAUAGCACUCUAAU
+>pxy-mir-8524-1
+GACCAAGUACGGGUUUGCAAGCCACAUAUAAUUACAGUAUGUAUGUGACUUGCAAAGCCA
+AGCUUGUAU
+>pxy-mir-8524-2
+GACCAAGUACGGGUUUGCAAGCCACAUAUAAUUACAGUAUGUAUGUGACUUGCAAAGCCA
+AGCUUGUAU
+>pxy-mir-8525
+GACUAUGUGGUGCCGUGUCCUGUAUGUGAACAACAUAACUGUAAGUACAACCAGUUGUUU
+UUCACAUAUAGAAUACGGCGCCAUAUUGA
+>pxy-mir-8526
+GCACAUUAUUUCUGGUAUCUGCUACUUUUAGGAGCUGAAGGUUGGAAACUGUUUAUGUAC
+UGUCUGAGGCAUACAACCCUGUCUACUCUCAGGUAUCAUUGUCACCCUGAGAUGGGUCAG
+GUUUGGUUGCCUCGGACUGUACAAUGCAUAUACCUGCGGCACCCUUCCCGUGGUCUGUCU
+CCGAAAACAAUGAAC
+>pxy-mir-8510a-7
+GCAUCUCUAGUCGAUACUGUGAUCUCACCCGCAAGUCGGUCGUGCACUCGCAGGUGAGAU
+GAUAGCAUUGAAGGGAGGAGC
+>pxy-mir-8527
+GCGGAGGACGCGGCACUACGAGCUUUCUCGUAGCACGGGCCAGUCCUGCUAUGAGAAAGC
+ACGUAACAGUAAUAAAUCCUCAGA
+>pxy-mir-8528b
+GCGGGAGCGCGGCGGCGAGCGGGACAGCGAGGCCGAGCAGCGCGCUCGCUCGCACAGCCU
+CUGCUCCUCG
+>pxy-mir-8529
+GCUGCCCUUAGGGUCAGUCUCUGUAUUCUCCCUUCACAGUCAAUAUCAUACCUGAAGGAG
+GAUAUUGAGGCUUAUCCUACGGGCACG
+>pxy-mir-8530
+GCUGGCGGGCGGUGCGGACAGAUCGUGAUGGCCUUAGACUUUCGUAGAUCUAAGGUCAUC
+ACGUUUUGUCCCUACCGUCCAGCCGAA
+>pxy-mir-8531
+GGUUCUCAGCCUGCAUCUCCCAGUGUGACGGAUCUAUGUCAGAUAUUAACAUAGAGUACU
+UAUGUCACUACGGUGGUACGGUGCGGCGUUGUGAUUG
+>pxy-mir-8489b
+GUAGCCUAAUGUAGUGUGCCGUUACCUCUGAAUUUGGAUGAAUUUAUGGACAUACAAGCU
+CAGAGGUAACGGCCACUAAAUUGGCCAU
+>pxy-mir-9a
+GUAGUAGAUUGGUUAAUUAUCUUUGGUUAUCUAGCUGUAUGAGUAAUAUAGACAUCAUAA
+AGCUAGGUUACCGGAGUUAAGUGCCGUCUAUGUC
+>pxy-mir-8532
+GUCGUCCGUCUAGCGCGGGGCAUCUUGUGUCGAAAACUACCAGUUUCGACACGAGAUGCU
+CUGUGCUAGGCGGACCUG
+>pxy-mir-8533
+GUCGUUUGUUGUGUCGAUGGGCAAGCCCAAAAUCCACUAGAAAGGGCGAGAAAGAAUUCU
+AGAGGAUCUUGGGCGCGCGUACUCGACACUACUGAACUAC
+>pxy-mir-8534
+GUGCCCAAUGACGGCAUCGGCAGCCUAAUCAUGUGCUAAAAUCCUGAAGUCUGCCGAUGC
+CGUCAGUGGGACC
+>pxy-mir-193
+GUGUAGUAUACCUGUCUAUUUCAGGGUGCCUUCAUCAUGACGAGGAAGUCCAUCCUGUGG
+CGAGGGUCUUAGCGGUCGAGUGGGCGUUCCCUUCCCUACUGGCCUGCUAAGUCCCAAGCC
+UCGGGGUGGAAUAGCUUCGGAGCUGAGAAGAAACUGCUGGACGAAGAUAUUGUACUAGCA
+>pxy-mir-8535-1
+GUGUCGCACGGACUGACUGACACCAACUAUCUACAGCUGACACACCUGUAGAUAGUUGGU
+GUCAGUCAGUCCGUGCGAGCA
+>pxy-mir-8535-2
+GUGUCGCACGGACUGACUGACACCAACUAUCUACAGCUGACACACCUGUAGAUAGUUGGU
+GUCAGUCAGUCCGUGCGAGCA
+>pxy-mir-277
+GUUCGCCUCGGAGUUCGUGCCAGGAGUGCGUUUGCAAAGCACGCUACAAGUUUGCGUUAU
+UGCAAAGUUGACACUGUAAAUGCACUAUCUGGUACGACACCCCGGGGCGAGU
+>pxy-mir-8510a-2
+CGUCGAUACUGUGAUCUCACCCGCAAGUCGGCCGUGCACUCGCAGGUGAGAUGAUAGCAU
+UGAAGG
+>pxy-mir-283
+UAAAUAUCAGCUGGUAAUUCUGGGGUUAGACUCCCCCAGAGUGCUAGUUGGUAUCCA
+>pxy-mir-306-1
+UAACGCAGGUCCAUUCCAGGUACUAGGUGACUCUGAGUGGUGCAAUAUCUCAGAGCUGCC
+UGGUGCCUGAACAUGGAUCUCGAUA
+>pxy-mir-306-2
+UAACGCAGGUCCAUUCCAGGUACUAGGUGACUCUGAGUGGUUGAAUAUCUCAGAGCUGUC
+UGGUGCCUCAACAUGGAUCUCGGUA
+>pxy-mir-3286
+UAAGAAGCCCAAAACAACUAUUGGUCACUGCACAGGACUAGUAACACAUUUAUACUCUUG
+UGCGUGUUCUAAUAGUUAUUGUGGGUGCUUCAAA
+>pxy-mir-8536b
+UAAUCUGACAUUAGUCAGUGACAUAGCUGGGAUAAGUUAGUGUGAAAUGAAACCUAUCUC
+AGCUAUGUCACUAUCUCGUGUCAGGAAU
+>pxy-mir-8537-2
+UACCGUCGCUGUUAUUGCAAAAUGUUCUAUUUUCGAUGACAUAAGACAUUUUGCAAUAAC
+AGCGACGAUA
+>pxy-mir-10
+UAGCAUCAAAUAUUAGUGCCCUACAUCUACCCUGUAGAUCCGAAUUUGUUUGAAGUGAGG
+CGACAAAUUCGGUUCUAGAGAGGUUUGUGUGGUGCACG
+>pxy-mir-8538
+UAUCAAAAUCUUCAAGAUCUAUAUCGACCAAAAUUAAUAACUAUCCUUCCUUACUUACUU
+AGGACAUACAUAAUAGUUAUUAAUCUUGGUUGGUUUA
+>pxy-mir-8539-1
+UAUGUAAUUAGUGGCGGAGUAAUUUCCAGAUAAACGUACGUCUUUAUAUCUACGUUUAUU
+UGGAAACUAUCCCGGCACAAUUACCAU
+>pxy-mir-8539-2
+UAUGUAAUUAGUGGCGGAGUAAUUUCCAGAUAAACGUACGUCUUUAUAUCUACGUUUAUU
+UGGAAACUAUCCCGGCACAAUUACCAU
+>pxy-mir-8540
+UAUUAUGUUAUAUUUAUUUGUUGACUCUAAAGGUUCUAUACUCACCUUUAGAGUCAACAA
+AUAAAUACAACAUUUU
+>pxy-mir-6307
+UCAGGGGUGCGGGAAAAGUCCGCCUUUGACGUCCCACUAACGGUCAAGCUCGAACUUUUC
+CUGCGCCACCGUG
+>pxy-mir-8541
+UCAUCUGGUCCGGGGACAGUUCUCGCCAAUCAGCUGCCACGAUUACUGCGUUCAGGUGCG
+CUUUUAGAGCGCCCGCGUAAUUGAGGCUGGCUGAUUGGGGGUCC
+>pxy-mir-745
+UCAUGUCAGUUGCGGCUCAUCGUCUGGCACUUUGCUUGUUAAUAUCGCUAGCUGCCUAGC
+GAAGGGCAACAAAUGACAGAG
+>pxy-mir-8521b-5
+UCCUCUUGUGUUCGUUCUUGUCUCUGGCGCGGCAGUCAGAAUUCGGGACAAGCCCGGAGC
+GGUGGCUUGUCCCGAAUUUUGACUCGGCCAAAUGAAUACCAGAACG
+>pxy-mir-8521a-5
+UCCUCUUGUGUUCGUUCUUGUCUCUGGCGCGGCAGUCAGAAUUCGGGACGAGCCCGGAGC
+GGUGGCUUGUCCCGAAUUUUGACUCUGCCAAAUGAAAACCAGAACGUAGACUAGGUUC
+>pxy-mir-8510a-8
+UCGUCGAUACUGUGAUCUCACCCGCAAGUCGGCCGUGCACUCGCAGGUGAGAUGAUAGCA
+UCGAAGG
+>pxy-mir-8510a-1
+UCGUCGAUACUGUGAUCUCACCCGCAAGUCGGCCGUGCACUCGCAGGUGAGAUGAUAGCA
+UUGAAGG
+>pxy-mir-8510a-3
+UCGUCGAUACUGUGAUCUCACCCGCAAGUCGGCCGUGCACUCGCAGGUGAGAUGAUAGCA
+UUGAAGG
+>pxy-mir-2b
+UCUCGUGUGCCUUCCAGGACAGAGCGAUGUGGCCGCGCCGUCAAAGCCGGUUGAUCAUAG
+GUCAUUGCGCAGCUAUCACAGCCAGCUUUGAUGAGCACGGCCGCAUUGCCAGCCACCCAG
+CCCACGCCU
+>pxy-mir-281
+UCUGUUAAUGAAGAGAGCUAUCCGUCGACAGUAUUGACCAUAAAAACUGUCAUGGAGUUG
+CUCUCUUUAUGAACGG
+>pxy-mir-8542
+UCUUUUUCCAUCGUCUCUAUGAGCAAUAAAAAAAAAAUAUUGCUCAUUGAGACGAUGGAA
+AAACU
+>pxy-mir-8543
+UGAACCUUAAAGGAGGAUCAACUUGAUAACUUAGAGUAGACUAGUUAUCAACUUUGAUCU
+UCUUAUAAGGUCUG
+>pxy-mir-9b-1
+UGAAGCUGCAUGGGCGCGGCUCGGCUCUUUGGUAUCCUAGCUGUAGGCGUUUACGAAGCG
+GCCUAAAGUUAUGGUACCGAAGUCCCGGGCCUCGCCAUUCGCUACG
+>pxy-mir-9b-2
+UGAAGCUGCAUGGGCGCGGCUCGGCUCUUUGGUAUCCUAGCUGUAGGCGUUUACGAAGCG
+GCCUAAAGUUAUGGUACCGAAGUCCCGGGCCUCGCCAUUCGCUACG
+>pxy-mir-2525-1
+UGCCAGCGUCCAGUGGCAACAGUUGCCAACAGACAUUUUGAAACCUGGUUUUUCUGGCGG
+CAACUGUUGUGGACAGGACGCUGUAA
+>pxy-mir-2525-2
+UGCCAGCGUCCAGUGGCAACAGUUGCCAACAGACAUUUUGAAACCUGGUUUUUCUGGCGG
+CAACUGUUGUGGACAGGACGCUGUAA
+>pxy-mir-8544-1
+UGCGGCGCCGCUAUGAACGCUUUGUGAGCUACAUUAUACAUUCAACUAAAUAAUGUAGCU
+CACAAAGCGUUCAAGUCGGCACCAAG
+>pxy-mir-8544-2
+UGCGGCGCCGCUAUGAACGCUUUGUGAGCUACAUUAUACAUUCAACUAAAUAAUGUAGCU
+CACAAAGCGUUCAAGUCGGCACCAAG
+>pxy-mir-8545
+UGGUGAGUCUAGCCUGGUGCAGGGCCUGGUCGAUGUGGUGCGGGUGCACCUGACGGUGGU
+GCUGCAUGUCGCAGUGGUUGCCGAGCACCACCACGGGCAGGUCAGCCGGCACUCGGCCCA
+GCUCCUUCACCACAUACUCAAAU
+>pxy-mir-274
+UGUGUUAGACGAAGUUGGUUUGUGACCGUCACUAACGGGCAGUAGUCUAUGGUUUGCUCG
+UUUUGAUGAUCGCAAAAUUAACUCGCUUGACUAU
+>pxy-mir-8521b-6
+UGUGUUCGUUCUUGUCUCUGGCGCGGCAGUCAGAAUUCGGGACAAGCCCGGAGCGGUGGC
+UUGUCCCGAAUUUUGACUCGGCCAAAUCAAAACCAG
+>pxy-mir-8521a-4
+UGUUCGUUCUUGUCUCUGGCGUGGCAGUCAGAAUUCGGGACAAGCCCGGAGCGGUCGCUU
+GUCCCGAAUUUUGACUCUGCCAAC
+>pxy-mir-8510a-6
+UGUUCUCGUCGAUACUGUGAUCUCACCCGCAAGUCGGUCGUGCACUCGCAGGUGAGAUGA
+UAGCAUUGAAGGGAGGA
+>pxy-mir-8546
+UUCCAUGGCUGUUGGCGAACUGUCAGUUCUGAUUGAUAAGUCAGGCUCGAGGUGGCUCGU
+CUAACUGUCCAUGUUC
+>pxy-mir-8536a
+UUCCUGACACGAGAUAGUGACAUAGCUGAGAUAGGUUUCAUUUCACACUAACUUAUCCCA
+GCUAUGUCACUGACUAAUGUCAGAUU
+>pxy-mir-8521b-7
+UUCGUUCUUGUCUCUGGCGCGGCAGUCAGAAUUCAGGACAAGCCCGGAGCGGUGGCUUGU
+CCCGAAUUUUGACUCGGCCAAAUCAAAACCAG
+>pxy-mir-8521b-2
+UUCGUUCUUGUCUCUGGCGCGGCAGUCAGAAUUCGGGACGAGCCCGGAGCGGUGGCUUGU
+CCCGAAUUUUGACUCGGCCAAAUGAAAACCAGAACGUA
+>pxy-mir-8521b-9
+UUCGUUUUUGUCUCUGGCGCGGCAGUCAGAAUUCGGGACAAGCCCGGAGCGGUGGCUUGU
+CCCGAAUUUUGACUCGGCCAAAUAAAAAACAGA
+>pxy-mir-8547
+UUCUUAUUUAGUUCAGUUUAAUAACAUAUUUUUAAUUAACUGAAAAUUAAAUAAUUA
+>pxy-mir-2767
+UUUAUUUCGUAGUCGUCUCAAGUAAAUCUCGUGCGGCUGCUGUUUCAUCCACAGGCGCUC
+UAGAUUUCCUUCUGAUGACUAUGGAAUUCC
+>pxy-mir-279b
+UUUCUCUUCUGGACGAUGAGUGAAUUUUUAGUUCACGUUUUGACAAUACCGUGACUAGAU
+UUUCACUCAUCCUCUAUGGGAGCGA
+>mse-mir-929b
+ACAAGAACUUAUAGUACUUGUGGUUGAAUUGACCAAUUGUAGGGAGUCCUUUUGCCUAAG
+CGACUCCCUAAUUGCGUCGAUUUACCUACAUGAUGACUAUAC
+>mse-mir-9570
+AUGGAGCGGUGUUGCGCUUUAUGAAUCGGUGUCAAUUUAUAUUAUAUGUUUACAUCACAU
+AAUAUAUUGAUUCCGAUACACAAGGCGCGGCAGAUGCCGUCG
+>mse-mir-9571a
+UCAAUGACAUUACACCUGCGCGCAGGGGUUGCAAGACCAGACCACUUAUUUUCUUAUUAU
+UGAACCAAAUAAGUUUCUGGAAUUGUAGCUUCUGCGUUGCUAU
+>mse-mir-9571b
+UCCAUGACAUUAUACCUGCGCGCAGGGGUUGCAAGACCAGGCCACUUAUUUUUUAUUAUU
+GAACAAAAUAAGUUCCUGGAAUUGUAGCUUCUGCGUUGCUA
+```
+
+<a id="step-12"></a>
+
+### 12. Run the final star-guided miRDeep2 analysis
+
+The December 2025 run is selected over the earlier mirdeep2_run directory.
+
+**Source:** `collaborator_sources/Agem_short_RNAseq/mirdeep2_run_Dec_2025/mirdeep2_mir193_STAR_spec.sh`  
+**Save as:** `mirdeep2_mir193_STAR_spec.sh`  
+**Archive treatment:** Complete analysis source with environment settings adapted. Replace installation-specific data paths with editable /path/to/project or /path/to/tools examples. Remove scheduler directives and job logging; use ordinary Bash and explicit thread defaults. Replace the job-array index with a required, range-checked sample-index argument. Use tools available on PATH instead of local modules, environment activation and executable installation paths. Declare Bash explicitly for the existing shell-array syntax.
+
+```bash
+#!/usr/bin/env bash
+
+# Run once per sample: bash mirdeep2_mir193_STAR_spec.sh INDEX (INDEX 0 through 2).
+TASK_ID="${1:?Supply a zero-based sample index (0-2)}"
+if [[ ! "$TASK_ID" =~ ^[0-2]$ ]]; then
+  echo "Sample index must be 0-2." >&2
+  exit 2
+fi
+echo "=========================================================="
+echo "Running on node : $HOSTNAME"
+echo "Current directory : $PWD"
+echo "Job Started:"
+date
+echo "=========================================================="
+
+
+PREFIX=/path/to/project/small_RNA-seq/mirdeep2_run_Dec_2025
+names=($(cat ${PREFIX}/samples))
+echo ${names[${TASK_ID}]} 
+
+CORES=40
+GENOME=/path/to/project/small_RNA-seq/mirdeep2_run_Dec_2025/GCF_050436995.1_ilAntGemm2_primary_genomic_no_white_space.fna
+
+miRDeep2.pl  ${names[${TASK_ID}]}Aligned.sortedByCoord.out_reads_collapsed.fa ${GENOME} \
+ ${names[${TASK_ID}]}Aligned.sortedByCoord.out.arf lep_mature_miRNA_mirbase_Nov20_2025_no_white_space.fa lep_hairpin_miRNA_mirbase_Nov20_2025_no_white_space.fa none \
+-s mir193_star.fa -z ${names[${TASK_ID}]}
+
+
+echo "=========================================================="
+date
+echo "=========================================================="
+
+
+```

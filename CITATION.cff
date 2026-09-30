@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "Please cite the companion paper and the archived Zenodo record when using these workflows. The preferred citation below identifies the archived record."
+title: "Companion code for Hyperdivergent haplotypes control melanic camouflage in a polymorphic moth"
+type: software
+authors:
+  - family-names: Livraghi
+    given-names: Luca
+    orcid: "https://orcid.org/0000-0002-2597-7550"
+repository-code: "https://github.com/MilesLuca/Anticarsia_melanism"
+url: "https://zenodo.org/records/22755120"
+license: CC-BY-SA-4.0
+preferred-citation:
+  type: data
+  title: "Hyperdivergent haplotypes control melanic camouflage in a polymorphic moth"
+  authors:
+    - family-names: Livraghi
+      given-names: Luca
+      orcid: "https://orcid.org/0000-0002-2597-7550"
+  doi: "10.5281/zenodo.22755120"
+  year: 2026
+  date-released: "2026-09-14"
+  version: v1
+  publisher:
+    name: Zenodo
