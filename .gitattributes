@@ -1,0 +1,4 @@
+# Preserve the exact bytes and checksums of the Zenodo source files.
+/analyses/*.md -text
+/README_code.md -text
+/README_DATASET.TXT -text
